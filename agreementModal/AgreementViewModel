@@ -1,0 +1,101 @@
+import RxSwift
+import RxCocoa
+
+struct AgreementSection {
+    var mainAgreement: BehaviorRelay<AgreementItem>
+    var subAgreements: [BehaviorRelay<AgreementItem>]
+}
+
+struct AgreementItem {
+    var isChecked: Bool
+    let title: String
+    let category: String
+    let isRequired: Bool
+}
+
+class KMAgreementViewModel {
+    
+    private let disposeBag = DisposeBag()
+    
+    let isAllAgreement = BehaviorRelay<Bool>(value: false)
+    let canNext = BehaviorRelay<Bool>(value: false)
+    
+    let agreementSections: [AgreementSection]
+    
+    init(agreementSections: [AgreementSection]) {
+        self.agreementSections = agreementSections
+        
+        self.setupBinding()
+    }
+    
+    private func setupBinding() {
+        Observable.combineLatest(
+            self.agreementSections
+                .filter { $0.mainAgreement.value.isRequired }
+                .map { $0.mainAgreement }
+        )
+        .map { $0.allSatisfy{ $0.isChecked } }
+        .bind(to: canNext)
+        .disposed(by: disposeBag)
+        
+        // mainAgreements로 isAllAgreement 체크
+        Observable.combineLatest(
+            self.agreementSections.map { $0.mainAgreement }
+        )
+        .map { $0.allSatisfy{ $0.isChecked } }
+        .subscribe(onNext: { [weak self] isAllAgreed in
+            self?.isAllAgreement.accept(isAllAgreed)
+        }).disposed(by: disposeBag)
+        
+        self.agreementSections.enumerated()
+            .forEach { (index, agreement) in
+                guard !agreement.subAgreements.isEmpty else {
+                    return
+                }
+                
+                // subAgremments로 mainAgreement 체크
+                Observable.combineLatest(agreement.subAgreements)
+                    .map { $0.allSatisfy{ $0.isChecked } }
+                    .subscribe(onNext: { isChecked in
+                        self.toggleMainAgreement(tag: index, isChecked: isChecked)
+                    })
+                    .disposed(by: disposeBag)
+            }
+    }
+    
+    func setAllAgreement(isChecked: Bool) {
+        isAllAgreement.accept(isChecked)
+        
+        self.agreementSections.enumerated().forEach { (index, _) in
+            self.toggleMainAgreementWithSub(tag: index, isChecked: isChecked)
+        }
+    }
+    
+    func toggleMainAgreementWithSub(tag: Int, isChecked: Bool) {
+        toggleMainAgreement(tag: tag, isChecked: isChecked)
+        
+        let subAgreement = self.agreementSections[tag].subAgreements
+        if !subAgreement.isEmpty {
+            subAgreement.enumerated().forEach { (subTag, agreement) in
+                toggleSubAgreement(parentTag: tag, subTag: subTag, isChecked: isChecked)
+            }
+        }
+    }
+    
+    func toggleMainAgreement(tag: Int, isChecked: Bool) {
+        let agreementSection = agreementSections[tag]
+        var newMainAgreement = agreementSection.mainAgreement.value
+        newMainAgreement.isChecked = isChecked
+        
+        agreementSections[tag].mainAgreement.accept(newMainAgreement)
+    }
+    
+    func toggleSubAgreement(parentTag: Int, subTag: Int, isChecked: Bool) {
+        let agreementSection = agreementSections[parentTag]
+        var newSubAgreement = agreementSection.subAgreements[subTag].value
+        newSubAgreement.isChecked = isChecked
+        
+        agreementSections[parentTag].subAgreements[subTag].accept(newSubAgreement)
+    }
+}
+
